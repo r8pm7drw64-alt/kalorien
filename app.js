@@ -2,7 +2,7 @@ import * as db from './db.js';
 import { startScanner, normalizeCode } from './scanner.js';
 import { recognizeImage } from './ocr.js';
 
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.3';
 const DB_URL = 'data/foods.tsv.gz';
 const DB_FILE_VERSION = 1; // erhöhen, wenn eine neue foods.tsv.gz ausgeliefert wird
 
@@ -11,10 +11,13 @@ const MEALS = [
   { id: 'lunch', name: 'Mittagessen' },
   { id: 'dinner', name: 'Abendessen' },
   { id: 'snack', name: 'Snacks' },
+  { id: 'swim', name: 'Schwimmen' },
+  { id: 'bike', name: 'Radfahren' },
+  { id: 'run', name: 'Laufen' },
 ];
 const DEFAULT_GOALS = { kcal: 2000, p: 100, c: 225, f: 67 };
 
-const state = { tab: 'diary', date: todayStr(), goals: { ...DEFAULT_GOALS }, historyDays: 7 };
+const state = { tab: 'diary', date: todayStr(), goals: { ...DEFAULT_GOALS }, mealGoals: {}, historyDays: 7 };
 const $view = document.getElementById('view');
 const $sheets = document.getElementById('sheets');
 
@@ -133,8 +136,11 @@ async function renderDiary() {
   for (const m of MEALS) {
     const list = entries.filter(e => e.meal === m.id).sort((a, b) => a.ts - b.ts);
     const mt = sumTotals(list);
+    const mg = state.mealGoals[m.id];
     html += `<section class="card">
-      <div class="card-title"><h2>${m.name}</h2><span class="sum">${r0(mt.k)} kcal</span></div>
+      <div class="card-title"><h2>${m.name}</h2><span class="sum">${mg ? `${r0(mt.k)} / ${r0(mg)} kcal` : `${r0(mt.k)} kcal`}</span></div>
+      ${mg ? `<div class="bar meal-bar ${mt.k > mg * 1.05 ? 'over' : ''}"><i style="width:${Math.min(100, (mt.k / mg) * 100)}%;background:var(--accent)"></i></div>
+        <div class="meal-left">${mt.k > mg ? `${r0(mt.k - mg)} kcal über dem Ziel` : `noch ${r0(mg - mt.k)} kcal`}</div>` : ''}
       ${list.length ? `<div class="meal-macros">E ${r0(mt.p)} g · K ${r0(mt.c)} g · F ${r0(mt.f)} g</div>` : ''}
       ${list.map(e => `<button class="entry" data-entry="${e.id}">
           <div class="info"><div class="name">${esc(e.n)}</div><div class="sub">${esc(amountLabel(e))}${e.b ? ' · ' + esc(e.b) : ''}</div></div>
@@ -330,7 +336,7 @@ function openFoodSheet({ food, entry, meal, date, preset, onAdded }) {
         ${[50, 100, 150, 200, 250].map(v => `<button class="chip" data-quick="${v}">${v} g</button>`).join('')}
         ${sq ? `<button class="chip" data-quick-portion>1 Portion</button>` : ''}
       </div>
-      <div class="segmented" data-meals>${MEALS.map(m => `<button data-meal="${m.id}">${m.name.replace('essen', '')}</button>`).join('')}</div>
+      <div class="segmented meal-picker" data-meals>${MEALS.map(m => `<button data-meal="${m.id}">${m.name.replace('essen', '')}</button>`).join('')}</div>
       <div class="nutri-grid" data-grid></div>
       <div class="list" style="padding:12px 16px"><table class="nutri-table" data-table></table></div>
       <button class="primary" data-save>${editing ? 'Änderung sichern' : 'Zum Tagebuch hinzufügen'}</button>
@@ -591,6 +597,12 @@ async function renderSettings() {
     <div class="hint" data-macrohint>Makros ergeben ${r0(macroKcal)} kcal.</div>
     <button class="secondary" data-split>Makros aus Kalorien berechnen (20 / 50 / 30 %)</button>
 
+    <div class="section-label">Kalorienziel je Mahlzeit</div>
+    <div class="list">
+      ${MEALS.map(m => `<div class="field"><label>${m.name}</label><input data-mg="${m.id}" inputmode="numeric" placeholder="kein Ziel" value="${state.mealGoals[m.id] != null ? r0(state.mealGoals[m.id]) : ''}"><span class="unit">kcal</span></div>`).join('')}
+    </div>
+    <div class="hint" data-mghint></div>
+
     <div class="section-label">Eigene Lebensmittel</div>
     <button class="secondary" data-custom>${customCount} eigene Lebensmittel verwalten</button>
 
@@ -616,7 +628,20 @@ async function renderSettings() {
     await db.setMeta('goals', state.goals);
     $view.querySelector('[data-macrohint]').textContent = `Makros ergeben ${r0(state.goals.p * 4 + state.goals.c * 4 + state.goals.f * 9)} kcal.`;
   };
-  $view.querySelectorAll('[data-g]').forEach(i => i.addEventListener('change', saveGoals));
+  $view.querySelectorAll('[data-g]').forEach(i => i.addEventListener('change', () => saveGoals().then(mealHint)));
+  const mealHint = () => {
+    const vals = Object.values(state.mealGoals).filter(v => v != null);
+    $view.querySelector('[data-mghint]').textContent = vals.length
+      ? `Summe der Mahlzeitenziele: ${r0(vals.reduce((a, v) => a + v, 0))} kcal (Tagesziel ${r0(state.goals.kcal)} kcal). Leer lassen = kein Ziel.`
+      : 'Optional. Leer lassen = kein Ziel für diese Mahlzeit.';
+  };
+  mealHint();
+  $view.querySelectorAll('[data-mg]').forEach(i => i.addEventListener('change', async () => {
+    const v = parseNum(i.value);
+    if (v != null && v > 0) state.mealGoals[i.dataset.mg] = v; else { delete state.mealGoals[i.dataset.mg]; i.value = ''; }
+    await db.setMeta('mealGoals', state.mealGoals);
+    mealHint();
+  }));
   $view.querySelector('[data-split]').onclick = async () => {
     await saveGoals();
     const k = state.goals.kcal;
@@ -636,6 +661,7 @@ async function renderSettings() {
       if (!confirm(`Backup vom ${new Date(data.exportedAt).toLocaleDateString('de-DE')} mit ${data.entries?.length || 0} Einträgen importieren? Die aktuellen Tagebuchdaten werden ersetzt.`)) return;
       await db.importData(data);
       state.goals = { ...DEFAULT_GOALS, ...(await db.getMeta('goals', {})) };
+  state.mealGoals = await db.getMeta('mealGoals', {});
       toast('Backup importiert'); render();
     } catch (e) { alert('Import fehlgeschlagen: ' + e.message); }
     fileIn.value = '';
@@ -731,6 +757,7 @@ async function init() {
     navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
   }
   state.goals = { ...DEFAULT_GOALS, ...(await db.getMeta('goals', {})) };
+  state.mealGoals = await db.getMeta('mealGoals', {});
   const ver = await db.getMeta('foodDbVersion', 0);
   if (ver < DB_FILE_VERSION) return runImport();
   render();

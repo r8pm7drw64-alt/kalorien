@@ -1,5 +1,5 @@
 // Offline-Cache. Version erhöhen, wenn sich Dateien ändern.
-const CACHE = 'kalorien-v3';
+const CACHE = 'kalorien-v5';
 // App-Code: immer zuerst aus dem Netz (damit Updates sofort ankommen), offline aus dem Cache
 const CODE = ['./', 'index.html', 'styles.css', 'app.js', 'db.js', 'scanner.js', 'ocr.js', 'manifest.webmanifest'];
 // Große, selten geänderte Dateien: zuerst aus dem Cache

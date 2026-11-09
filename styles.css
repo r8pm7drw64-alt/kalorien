@@ -256,3 +256,16 @@ button:disabled { opacity: .45; }
 .bar.stacked { display: flex; }
 .bar.stacked i { border-radius: 0; }
 .bar.stacked i:first-child { border-radius: 4px 0 0 4px; }
+/* Sport: verbrannte Kalorien */
+.burn { color: var(--sport); }
+.entry .kcal.burn { color: var(--sport); font-weight: 600; }
+.add-row { display: flex; gap: 16px; border-top: 1px solid var(--line); margin-top: 2px; }
+.add-row .add-btn { border-top: 0; width: auto; }
+.add-btn.burn { color: var(--sport); }
+.unit-label { font-size: 20px; color: var(--muted); padding: 0 8px; }
+.split-line { display: flex; justify-content: space-between; font-size: 15px; padding: 3px 0; font-variant-numeric: tabular-nums; }
+.split-line span:last-child { color: var(--muted); }
+.split-line.strong { font-weight: 600; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 7px; }
+.split-line.strong span:last-child { color: var(--text); }
+.split-line.is-over, .split-line.is-over span:last-child { color: var(--over); }
+.split-bar { margin: 8px 0 2px; }

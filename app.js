@@ -2,7 +2,7 @@ import * as db from './db.js';
 import { startScanner, normalizeCode } from './scanner.js';
 import { recognizeImage } from './ocr.js';
 
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 const DB_URL = 'data/foods.tsv.gz';
 const DB_FILE_VERSION = 1; // erhöhen, wenn eine neue foods.tsv.gz ausgeliefert wird
 
@@ -17,7 +17,7 @@ const MEALS = [
 ];
 const DEFAULT_GOALS = { kcal: 2000, p: 100, c: 225, f: 67 };
 
-const state = { tab: 'diary', date: todayStr(), goals: { ...DEFAULT_GOALS }, mealGoals: {}, historyDays: 7 };
+const state = { tab: 'diary', date: todayStr(), goals: { ...DEFAULT_GOALS }, historyDays: 7 };
 const $view = document.getElementById('view');
 const $sheets = document.getElementById('sheets');
 
@@ -50,6 +50,7 @@ const ICON = {
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 8v8M8 12h8"/></svg>',
   left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
   right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+  flame: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c-3.9 0-6.5-2.6-6.5-6.2 0-3.4 2.4-5.6 3.6-8.3.4 1.6 1.4 2.8 2.6 3.4.2-2.9 1.6-5.4 3.6-6.9-.1 2.6 1 4.6 2.4 6.5 1.2 1.6 1.8 3.2 1.8 5.3 0 3.6-2.6 6.2-6.5 6.2z"/></svg>',
   scan: '<svg viewBox="0 0 24 24"><path d="M3 7V4h3M21 7V4h-3M3 17v3h3M21 17v3h-3M7 8v8M10 8v8M13 8v8M17 8v8"/></svg>',
 };
 
@@ -97,24 +98,20 @@ function closeSheet(el) {
 function closeAllSheets() { [...$sheets.children].forEach(closeSheet); }
 
 // ============ Tagebuch ============
+const isBurn = e => e.unit === 'burn';
+
 async function renderDiary() {
   const entries = await db.entriesForDate(state.date);
-  const t = sumTotals(entries);
   const g = state.goals;
-  // Grundumsatz = normale Mahlzeiten, Sport = Schwimmen/Radfahren/Laufen
   const sportIds = new Set(MEALS.filter(m => m.sport).map(m => m.id));
-  const base = sumTotals(entries.filter(e => !sportIds.has(e.meal)));
-  const sport = sumTotals(entries.filter(e => sportIds.has(e.meal)));
-  const sportGoal = MEALS.filter(m => m.sport).reduce((a, m) => a + (state.mealGoals[m.id] || 0), 0);
-  const left = g.kcal - base.k;
-  const pct = Math.min(1, base.k / (g.kcal || 1));
-  const splitRow = (label, cls, val, goal) => `
-    <div class="split-row">
-      <div class="row"><span><i class="dot ${cls}"></i>${label}</span><span>${goal ? `<b>${r0(val)}</b> / ${r0(goal)} kcal` : `<b>${r0(val)}</b> kcal`}</span></div>
-      ${goal ? `<div class="bar ${val > goal * 1.05 ? 'over' : ''}"><i class="${cls}" style="width:${Math.min(100, (val / goal) * 100)}%"></i></div>
-      <div class="meal-left ${val > goal ? 'is-over' : ''}">${val > goal ? `${r0(val - goal)} kcal über dem Ziel` : `noch ${r0(goal - val)} kcal`}</div>` : ''}
-    </div>`;
-  const totalGoal = g.kcal + sportGoal;
+  const eaten = entries.filter(e => !isBurn(e));
+  const t = sumTotals(eaten);                                            // alles Gegessene
+  const base = sumTotals(eaten.filter(e => !sportIds.has(e.meal)));      // Frühstück … Snacks
+  const sportEat = sumTotals(eaten.filter(e => sportIds.has(e.meal)));   // beim Sport gegessen
+  const burned = -sumTotals(entries.filter(isBurn)).k;                   // beim Sport verbrannt
+  const budget = g.kcal + burned;                                        // Grundumsatz + Sport
+  const left = budget - t.k;
+  const pct = Math.min(1, t.k / (budget || 1));
   const C = 2 * Math.PI * 52;
   const macro = (label, val, goal, cls) => {
     const over = val > goal * 1.05;
@@ -138,38 +135,43 @@ async function renderDiary() {
         <div class="center"><div class="big">${r0(Math.abs(left))}</div><div class="small">${left < 0 ? 'kcal zu viel' : 'kcal übrig'}</div></div>
       </div>
       <div>
-        <div class="kcal-line"><b>${r0(base.k)}</b> von ${r0(g.kcal)} kcal Grundumsatz</div>
-        ${macro('Eiweiß', t.p, g.p, 'c-p')}
-        ${macro('Kohlenhydrate', t.c, g.c, 'c-c')}
-        ${macro('Fett', t.f, g.f, 'c-f')}
+        <div class="kcal-line"><b>${r0(t.k)}</b> / ${r0(budget)} kcal</div>
+        ${macro('E', t.p, g.p, 'c-p')}
+        ${macro('K', t.c, g.c, 'c-c')}
+        ${macro('F', t.f, g.f, 'c-f')}
       </div>
     </div>
     <div class="card split">
       <div class="card-title"><h2>Grundumsatz &amp; Sport</h2></div>
-      ${splitRow('Grundumsatz', 'c-base', base.k, g.kcal)}
-      ${splitRow('Sport', 'c-sport', sport.k, sportGoal)}
-      <div class="split-total">
-        <div class="row"><span>Gesamt</span><span><b>${r0(t.k)}</b> / ${r0(totalGoal)} kcal</span></div>
-        <div class="bar stacked">
-          <i class="c-base" style="width:${Math.min(100, (base.k / (totalGoal || 1)) * 100)}%"></i><i class="c-sport" style="width:${Math.max(0, Math.min(100 - (base.k / (totalGoal || 1)) * 100, (sport.k / (totalGoal || 1)) * 100))}%"></i>
-        </div>
-        ${!sportGoal ? '<div class="meal-left">Tipp: Kalorienziele für Schwimmen, Radfahren und Laufen in den Einstellungen festlegen.</div>' : ''}
+      <div class="split-line"><span><i class="dot c-base"></i>Grundumsatz</span><span>${r0(g.kcal)} kcal</span></div>
+      <div class="split-line"><span><i class="dot c-sport"></i>Sport verbrannt</span><span>+ ${r0(burned)} kcal</span></div>
+      <div class="split-line strong"><span>Tagesbudget</span><span>${r0(budget)} kcal</span></div>
+      <div class="split-line"><span>Gegessen (Mahlzeiten)</span><span>− ${r0(base.k)} kcal</span></div>
+      ${sportEat.k ? `<div class="split-line"><span>Gegessen (beim Sport)</span><span>− ${r0(sportEat.k)} kcal</span></div>` : ''}
+      <div class="bar stacked split-bar">
+        <i class="c-base" style="width:${Math.min(100, (base.k / (budget || 1)) * 100)}%"></i><i class="c-sport" style="width:${Math.max(0, Math.min(100 - (base.k / (budget || 1)) * 100, (sportEat.k / (budget || 1)) * 100))}%"></i>
       </div>
+      <div class="split-line strong ${left < 0 ? 'is-over' : ''}"><span>${left < 0 ? 'Zu viel' : 'Übrig'}</span><span>${r0(Math.abs(left))} kcal</span></div>
     </div>`;
 
   for (const m of MEALS) {
     const list = entries.filter(e => e.meal === m.id).sort((a, b) => a.ts - b.ts);
-    const mt = sumTotals(list);
-    const mg = state.mealGoals[m.id];
+    const food = list.filter(e => !isBurn(e));
+    const mt = sumTotals(food);
+    const mb = -sumTotals(list.filter(isBurn)).k;
     html += `<section class="card">
-      <div class="card-title"><h2>${m.name}</h2><span class="sum">${mg ? `${r0(mt.k)} / ${r0(mg)} kcal` : `${r0(mt.k)} kcal`}</span></div>
-      ${mg ? `<div class="bar meal-bar ${mt.k > mg * 1.05 ? 'over' : ''}"><i style="width:${Math.min(100, (mt.k / mg) * 100)}%;background:var(--accent)"></i></div>
-        <div class="meal-left">${mt.k > mg ? `${r0(mt.k - mg)} kcal über dem Ziel` : `noch ${r0(mg - mt.k)} kcal`}</div>` : ''}
-      ${list.length ? `<div class="meal-macros">E ${r0(mt.p)} g · K ${r0(mt.c)} g · F ${r0(mt.f)} g</div>` : ''}
-      ${list.map(e => `<button class="entry" data-entry="${e.id}">
-          <div class="info"><div class="name">${esc(e.n)}</div><div class="sub">${esc(amountLabel(e))}${e.b ? ' · ' + esc(e.b) : ''}</div></div>
-          <div class="kcal">${r0(totals(e).k)} kcal</div></button>`).join('')}
-      <button class="add-btn" data-add="${m.id}">${ICON.plus} Hinzufügen</button>
+      <div class="card-title"><h2>${m.name}</h2><span class="sum">${r0(mt.k)} kcal${mb ? ` · <span class="burn">−${r0(mb)}</span>` : ''}</span></div>
+      ${food.length ? `<div class="meal-macros">E ${r0(mt.p)} g · K ${r0(mt.c)} g · F ${r0(mt.f)} g</div>` : ''}
+      ${list.map(e => isBurn(e)
+        ? `<button class="entry" data-entry="${e.id}">
+            <div class="info"><div class="name">🔥 Verbrannt</div><div class="sub">${esc(e.note || m.name)}</div></div>
+            <div class="kcal burn">−${r0(-totals(e).k)} kcal</div></button>`
+        : `<button class="entry" data-entry="${e.id}">
+            <div class="info"><div class="name">${esc(e.n)}</div><div class="sub">${esc(amountLabel(e))}${e.b ? ' · ' + esc(e.b) : ''}</div></div>
+            <div class="kcal">${r0(totals(e).k)} kcal</div></button>`).join('')}
+      ${m.sport
+        ? `<div class="add-row"><button class="add-btn" data-add="${m.id}">${ICON.plus} Essen</button><button class="add-btn burn" data-burn="${m.id}">${ICON.flame} Verbrannt</button></div>`
+        : `<button class="add-btn" data-add="${m.id}">${ICON.plus} Hinzufügen</button>`}
     </section>`;
   }
   $view.innerHTML = html;
@@ -178,10 +180,58 @@ async function renderDiary() {
   const tb = $view.querySelector('[data-today]');
   if (tb) tb.onclick = () => { state.date = todayStr(); render(); };
   $view.querySelectorAll('[data-add]').forEach(b => (b.onclick = () => openAddSheet(b.dataset.add)));
+  $view.querySelectorAll('[data-burn]').forEach(b => (b.onclick = () => openBurnSheet({ meal: b.dataset.burn })));
   $view.querySelectorAll('[data-entry]').forEach(b => (b.onclick = () => {
     const e = entries.find(x => x.id === +b.dataset.entry);
-    openFoodSheet({ entry: e });
+    if (isBurn(e)) openBurnSheet({ entry: e }); else openFoodSheet({ entry: e });
   }));
+}
+
+// ============ Verbrannte Kalorien (Sport) ============
+function openBurnSheet({ meal, entry }) {
+  const editing = !!entry;
+  let curMeal = editing ? entry.meal : meal;
+  const sports = MEALS.filter(m => m.sport);
+  const el = openSheet({
+    title: 'Verbrannte Kalorien',
+    right: 'Fertig',
+    body: `
+      <div class="segmented">${sports.map(m => `<button data-sport="${m.id}">${m.name}</button>`).join('')}</div>
+      <div class="amount-row">
+        <input data-kcal inputmode="numeric" placeholder="0" value="${editing ? r0(-totals(entry).k) : ''}" enterkeyhint="done">
+        <span class="unit-label">kcal</span>
+      </div>
+      <div class="list"><div class="field"><label>Notiz</label><input class="wide" data-note placeholder="z. B. 60 min locker" value="${esc(editing ? entry.note || '' : '')}"></div></div>
+      <div class="hint">Den Wert z. B. von deiner Uhr oder Strava übernehmen. Er erhöht dein Tagesbudget.</div>
+      <button class="primary" data-save>${editing ? 'Änderung sichern' : 'Eintragen'}</button>
+      ${editing ? '<button class="secondary danger" data-del>Eintrag löschen</button>' : ''}`,
+    onRight: () => save(),
+  });
+  const $k = el.querySelector('[data-kcal]');
+  const upd = () => el.querySelectorAll('[data-sport]').forEach(b => b.classList.toggle('active', b.dataset.sport === curMeal));
+  el.querySelectorAll('[data-sport]').forEach(b => (b.onclick = () => { curMeal = b.dataset.sport; upd(); }));
+  upd();
+  $k.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+  el.querySelector('[data-save]').onclick = save;
+  const del = el.querySelector('[data-del]');
+  if (del) del.onclick = async () => {
+    if (!confirm('Eintrag löschen?')) return;
+    await db.deleteEntry(entry.id); closeSheet(el); render(); toast('Gelöscht');
+  };
+  setTimeout(() => { $k.focus(); $k.select(); }, 250);
+
+  async function save() {
+    const v = parseNum($k.value);
+    if (!(v > 0)) { toast('Bitte verbrannte Kalorien eingeben'); return; }
+    const note = el.querySelector('[data-note]').value.trim();
+    const e = {
+      ...(entry || {}), date: editing ? entry.date : state.date, meal: curMeal, code: 'burn', n: 'Verbrannt', b: '', note,
+      sq: null, per: { k: -v, p: 0, c: 0, f: 0 }, g: 100, unit: 'burn', ts: editing ? entry.ts : Date.now(),
+    };
+    if (editing) await db.putEntry(e); else await db.addEntry(e);
+    closeSheet(el); render();
+    toast(`${r0(v)} kcal verbrannt eingetragen`);
+  }
 }
 
 // Wischen links/rechts wechselt den Tag
@@ -569,9 +619,10 @@ async function renderHistory() {
   const days = [];
   for (let i = 0; i < n; i++) {
     const d = addDays(from, i);
-    days.push({ d, ...sumTotals(entries.filter(e => e.date === d)) });
+    const de = entries.filter(e => e.date === d);
+    days.push({ d, ...sumTotals(de.filter(e => !isBurn(e))), burned: -sumTotals(de.filter(isBurn)).k });
   }
-  const logged = days.filter(d => d.k > 0);
+  const logged = days.filter(d => d.k > 0 || d.burned > 0);
   const avg = key => (logged.length ? logged.reduce((a, d) => a + d[key], 0) / logged.length : 0);
   const max = Math.max(state.goals.kcal * 1.15, ...days.map(d => d.k), 1);
   const H = n > 14 ? 150 : 170, area = H - 18;
@@ -587,13 +638,14 @@ async function renderHistory() {
         ${days.map(d => {
           const h = Math.max(2, (d.k / max) * area);
           const lbl = n <= 7 ? parseDate(d.d).toLocaleDateString('de-DE', { weekday: 'short' }).slice(0, 2) : (n <= 14 || parseDate(d.d).getDate() % 5 === 0 ? parseDate(d.d).getDate() : '');
-          return `<div class="col" title="${d.d}: ${r0(d.k)} kcal"><i class="${d.k === 0 ? 'zero' : d.k > state.goals.kcal * 1.05 ? 'over' : ''}" style="height:${h}px"></i><span>${lbl}</span></div>`;
+          return `<div class="col" title="${d.d}: ${r0(d.k)} kcal"><i class="${d.k === 0 ? 'zero' : d.k > (state.goals.kcal + d.burned) * 1.05 ? 'over' : ''}" style="height:${h}px"></i><span>${lbl}</span></div>`;
         }).join('')}
       </div>
     </div>
     <div class="section-label">Durchschnitt an ${logged.length} erfassten Tag${logged.length === 1 ? '' : 'en'}</div>
     <div class="stats">
-      <div class="stat"><b>${r0(avg('k'))}</b><span>kcal / Tag (Ziel ${r0(state.goals.kcal)})</span></div>
+      <div class="stat"><b>${r0(avg('k'))}</b><span>kcal gegessen / Tag</span></div>
+      <div class="stat"><b>${r0(avg('burned'))}</b><span>kcal verbrannt / Tag</span></div>
       <div class="stat"><b>${r0(avg('p'))} g</b><span>Eiweiß (Ziel ${r0(state.goals.p)} g)</span></div>
       <div class="stat"><b>${r0(avg('c'))} g</b><span>Kohlenhydrate (Ziel ${r0(state.goals.c)} g)</span></div>
       <div class="stat"><b>${r0(avg('f'))} g</b><span>Fett (Ziel ${r0(state.goals.f)} g)</span></div>
@@ -618,15 +670,10 @@ async function renderSettings() {
       <div class="field"><label>Kohlenhydrate</label><input data-g="c" inputmode="numeric" value="${r0(g.c)}"><span class="unit">g</span></div>
       <div class="field"><label>Fett</label><input data-g="f" inputmode="numeric" value="${r0(g.f)}"><span class="unit">g</span></div>
     </div>
-    <div class="hint">Grundumsatz = Tagesziel ohne Sport (Frühstück bis Snacks). Sport-Kalorien zählst du über die Mahlzeiten Schwimmen, Radfahren und Laufen.</div>
+    <div class="hint">Grundumsatz = Tagesziel ohne Sport. Verbrannte Kalorien, die du bei Schwimmen, Radfahren oder Laufen einträgst, erhöhen dein Tagesbudget.</div>
     <div class="hint" data-macrohint>Makros ergeben ${r0(macroKcal)} kcal.</div>
     <button class="secondary" data-split>Makros aus Kalorien berechnen (20 / 50 / 30 %)</button>
 
-    <div class="section-label">Kalorienziel je Mahlzeit</div>
-    <div class="list">
-      ${MEALS.map(m => `<div class="field"><label>${m.name}</label><input data-mg="${m.id}" inputmode="numeric" placeholder="kein Ziel" value="${state.mealGoals[m.id] != null ? r0(state.mealGoals[m.id]) : ''}"><span class="unit">kcal</span></div>`).join('')}
-    </div>
-    <div class="hint" data-mghint></div>
 
     <div class="section-label">Eigene Lebensmittel</div>
     <button class="secondary" data-custom>${customCount} eigene Lebensmittel verwalten</button>
@@ -653,20 +700,7 @@ async function renderSettings() {
     await db.setMeta('goals', state.goals);
     $view.querySelector('[data-macrohint]').textContent = `Makros ergeben ${r0(state.goals.p * 4 + state.goals.c * 4 + state.goals.f * 9)} kcal.`;
   };
-  $view.querySelectorAll('[data-g]').forEach(i => i.addEventListener('change', () => saveGoals().then(mealHint)));
-  const mealHint = () => {
-    const vals = Object.values(state.mealGoals).filter(v => v != null);
-    $view.querySelector('[data-mghint]').textContent = vals.length
-      ? `Summe der Mahlzeitenziele: ${r0(vals.reduce((a, v) => a + v, 0))} kcal (Tagesziel ${r0(state.goals.kcal)} kcal). Leer lassen = kein Ziel.`
-      : 'Optional. Leer lassen = kein Ziel für diese Mahlzeit.';
-  };
-  mealHint();
-  $view.querySelectorAll('[data-mg]').forEach(i => i.addEventListener('change', async () => {
-    const v = parseNum(i.value);
-    if (v != null && v > 0) state.mealGoals[i.dataset.mg] = v; else { delete state.mealGoals[i.dataset.mg]; i.value = ''; }
-    await db.setMeta('mealGoals', state.mealGoals);
-    mealHint();
-  }));
+  $view.querySelectorAll('[data-g]').forEach(i => i.addEventListener('change', saveGoals));
   $view.querySelector('[data-split]').onclick = async () => {
     await saveGoals();
     const k = state.goals.kcal;
@@ -686,7 +720,6 @@ async function renderSettings() {
       if (!confirm(`Backup vom ${new Date(data.exportedAt).toLocaleDateString('de-DE')} mit ${data.entries?.length || 0} Einträgen importieren? Die aktuellen Tagebuchdaten werden ersetzt.`)) return;
       await db.importData(data);
       state.goals = { ...DEFAULT_GOALS, ...(await db.getMeta('goals', {})) };
-  state.mealGoals = await db.getMeta('mealGoals', {});
       toast('Backup importiert'); render();
     } catch (e) { alert('Import fehlgeschlagen: ' + e.message); }
     fileIn.value = '';
@@ -782,7 +815,6 @@ async function init() {
     navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
   }
   state.goals = { ...DEFAULT_GOALS, ...(await db.getMeta('goals', {})) };
-  state.mealGoals = await db.getMeta('mealGoals', {});
   const ver = await db.getMeta('foodDbVersion', 0);
   if (ver < DB_FILE_VERSION) return runImport();
   render();

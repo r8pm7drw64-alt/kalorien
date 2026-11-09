@@ -2,7 +2,7 @@ import * as db from './db.js';
 import { startScanner, normalizeCode } from './scanner.js';
 import { recognizeImage } from './ocr.js';
 
-const APP_VERSION = '1.5';
+const APP_VERSION = '1.6';
 const DB_URL = 'data/foods.tsv.gz';
 const DB_FILE_VERSION = 1; // erhöhen, wenn eine neue foods.tsv.gz ausgeliefert wird
 
@@ -15,7 +15,16 @@ const MEALS = [
   { id: 'bike', name: 'Radfahren', sport: true },
   { id: 'run', name: 'Laufen', sport: true },
 ];
-const DEFAULT_GOALS = { kcal: 2000, p: 100, c: 225, f: 67 };
+const DEFAULT_GOALS = { kcal: 2000, p: 100, c: 225, f: 67, water: 2500 };
+const WATER_PRESETS = [
+  { ml: 200, label: 'Glas klein' },
+  { ml: 300, label: 'Glas groß' },
+  { ml: 750, label: 'Flasche' },
+];
+// Flüssigkeit pro Tag als Liste [{ ml, ts }] in meta "water:JJJJ-MM-TT" (landet automatisch im Backup)
+const getWater = date => db.getMeta('water:' + date, []);
+const setWater = (date, list) => db.setMeta('water:' + date, list);
+const fmtL = ml => (ml / 1000).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 });
 
 const state = { tab: 'diary', date: todayStr(), goals: { ...DEFAULT_GOALS }, historyDays: 7 };
 const $view = document.getElementById('view');
@@ -102,6 +111,8 @@ const isBurn = e => e.unit === 'burn';
 
 async function renderDiary() {
   const entries = await db.entriesForDate(state.date);
+  const water = await getWater(state.date);
+  const waterMl = water.reduce((a, w) => a + w.ml, 0);
   const g = state.goals;
   const sportIds = new Set(MEALS.filter(m => m.sport).map(m => m.id));
   const eaten = entries.filter(e => !isBurn(e));
@@ -139,6 +150,17 @@ async function renderDiary() {
         ${macro('E', t.p, g.p, 'c-p')}
         ${macro('K', t.c, g.c, 'c-c')}
         ${macro('F', t.f, g.f, 'c-f')}
+      </div>
+    </div>
+    <div class="card water">
+      <div class="card-title"><h2>💧 Flüssigkeit</h2><span class="sum"><b>${fmtL(waterMl)}</b> / ${fmtL(g.water)} L</span></div>
+      <div class="bar water-bar"><i style="width:${Math.min(100, (waterMl / (g.water || 1)) * 100)}%"></i></div>
+      <div class="water-btns">
+        ${WATER_PRESETS.map((w, i) => `<button data-water="${w.ml}"><span class="w-icon w${i}"></span><b>+${w.ml} ml</b><small>${w.label}</small></button>`).join('')}
+      </div>
+      <div class="water-links">
+        <button data-water-undo ${water.length ? '' : 'disabled'}>↶ Letztes entfernen${water.length ? ` (${water[water.length - 1].ml} ml)` : ''}</button>
+        <button data-water-custom>Andere Menge</button>
       </div>
     </div>
     <div class="card split">
@@ -181,6 +203,27 @@ async function renderDiary() {
   if (tb) tb.onclick = () => { state.date = todayStr(); render(); };
   $view.querySelectorAll('[data-add]').forEach(b => (b.onclick = () => openAddSheet(b.dataset.add)));
   $view.querySelectorAll('[data-burn]').forEach(b => (b.onclick = () => openBurnSheet({ meal: b.dataset.burn })));
+  const addWater = async ml => {
+    const list = await getWater(state.date);
+    list.push({ ml, ts: Date.now() });
+    await setWater(state.date, list);
+    const total = list.reduce((a, w) => a + w.ml, 0);
+    toast(total >= g.water && total - ml < g.water ? `🎉 Flüssigkeitsziel erreicht: ${fmtL(total)} L` : `+${ml} ml · ${fmtL(total)} L`);
+    render();
+  };
+  $view.querySelectorAll('[data-water]').forEach(b => (b.onclick = () => addWater(+b.dataset.water)));
+  $view.querySelector('[data-water-undo]').onclick = async () => {
+    const list = await getWater(state.date);
+    const last = list.pop();
+    if (!last) return;
+    await setWater(state.date, list);
+    toast(`${last.ml} ml entfernt`);
+    render();
+  };
+  $view.querySelector('[data-water-custom]').onclick = () => {
+    const v = parseNum(prompt('Menge in ml:', '500'));
+    if (v > 0 && v <= 5000) addWater(Math.round(v));
+  };
   $view.querySelectorAll('[data-entry]').forEach(b => (b.onclick = () => {
     const e = entries.find(x => x.id === +b.dataset.entry);
     if (isBurn(e)) openBurnSheet({ entry: e }); else openFoodSheet({ entry: e });
@@ -620,9 +663,12 @@ async function renderHistory() {
   for (let i = 0; i < n; i++) {
     const d = addDays(from, i);
     const de = entries.filter(e => e.date === d);
-    days.push({ d, ...sumTotals(de.filter(e => !isBurn(e))), burned: -sumTotals(de.filter(isBurn)).k });
+    const wml = (await getWater(d)).reduce((a, w) => a + w.ml, 0);
+    days.push({ d, ...sumTotals(de.filter(e => !isBurn(e))), burned: -sumTotals(de.filter(isBurn)).k, water: wml });
   }
   const logged = days.filter(d => d.k > 0 || d.burned > 0);
+  const wDays = days.filter(d => d.water > 0);
+  const avgWater = wDays.length ? wDays.reduce((a, d) => a + d.water, 0) / wDays.length : 0;
   const avg = key => (logged.length ? logged.reduce((a, d) => a + d[key], 0) / logged.length : 0);
   const max = Math.max(state.goals.kcal * 1.15, ...days.map(d => d.k), 1);
   const H = n > 14 ? 150 : 170, area = H - 18;
@@ -646,6 +692,7 @@ async function renderHistory() {
     <div class="stats">
       <div class="stat"><b>${r0(avg('k'))}</b><span>kcal gegessen / Tag</span></div>
       <div class="stat"><b>${r0(avg('burned'))}</b><span>kcal verbrannt / Tag</span></div>
+      <div class="stat"><b>${fmtL(avgWater)} L</b><span>Flüssigkeit / Tag (Ziel ${fmtL(state.goals.water)} L)</span></div>
       <div class="stat"><b>${r0(avg('p'))} g</b><span>Eiweiß (Ziel ${r0(state.goals.p)} g)</span></div>
       <div class="stat"><b>${r0(avg('c'))} g</b><span>Kohlenhydrate (Ziel ${r0(state.goals.c)} g)</span></div>
       <div class="stat"><b>${r0(avg('f'))} g</b><span>Fett (Ziel ${r0(state.goals.f)} g)</span></div>
@@ -669,6 +716,7 @@ async function renderSettings() {
       <div class="field"><label>Eiweiß</label><input data-g="p" inputmode="numeric" value="${r0(g.p)}"><span class="unit">g</span></div>
       <div class="field"><label>Kohlenhydrate</label><input data-g="c" inputmode="numeric" value="${r0(g.c)}"><span class="unit">g</span></div>
       <div class="field"><label>Fett</label><input data-g="f" inputmode="numeric" value="${r0(g.f)}"><span class="unit">g</span></div>
+      <div class="field"><label>Flüssigkeit</label><input data-g="water" inputmode="numeric" value="${r0(g.water)}"><span class="unit">ml</span></div>
     </div>
     <div class="hint">Grundumsatz = Tagesziel ohne Sport. Verbrannte Kalorien, die du bei Schwimmen, Radfahren oder Laufen einträgst, erhöhen dein Tagesbudget.</div>
     <div class="hint" data-macrohint>Makros ergeben ${r0(macroKcal)} kcal.</div>
@@ -693,7 +741,7 @@ async function renderSettings() {
     <div class="hint" style="text-align:center;margin-top:20px">Kalorien · Version ${APP_VERSION} · läuft komplett offline</div>`;
 
   const saveGoals = async () => {
-    for (const k of ['kcal', 'p', 'c', 'f']) {
+    for (const k of ['kcal', 'p', 'c', 'f', 'water']) {
       const v = parseNum($view.querySelector(`[data-g=${k}]`).value);
       if (v != null && v >= 0) state.goals[k] = v;
     }

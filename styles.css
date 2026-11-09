@@ -269,3 +269,21 @@ button:disabled { opacity: .45; }
 .split-line.strong span:last-child { color: var(--text); }
 .split-line.is-over, .split-line.is-over span:last-child { color: var(--over); }
 .split-bar { margin: 8px 0 2px; }
+/* Flüssigkeit */
+:root { --water: #2f8fe6; --water-soft: #e6f1fc; }
+@media (prefers-color-scheme: dark) { :root { --water: #4aa8ff; --water-soft: #13283d; } }
+.water .sum b { color: var(--text); font-weight: 600; }
+.water-bar { height: 9px; margin: 4px 0 12px; }
+.water-bar i { background: var(--water); }
+.water-btns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.water-btns button { background: var(--water-soft); color: var(--water); border-radius: 12px; padding: 10px 4px 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.water-btns button:active { transform: scale(.96); }
+.water-btns b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.water-btns small { font-size: 12px; color: var(--muted); }
+.w-icon { display: block; width: 18px; height: 24px; border: 2px solid currentColor; border-top: 0; border-radius: 0 0 5px 5px; position: relative; margin-bottom: 3px; }
+.w-icon::after { content: ""; position: absolute; left: 2px; right: 2px; bottom: 2px; height: 45%; background: currentColor; border-radius: 0 0 3px 3px; opacity: .5; }
+.w-icon.w1 { width: 22px; height: 28px; }
+.w-icon.w2 { width: 14px; height: 30px; border-top: 2px solid currentColor; border-radius: 4px 4px 5px 5px; }
+.w-icon.w2::before { content: ""; position: absolute; left: 3px; right: 3px; top: -6px; height: 4px; border: 2px solid currentColor; border-bottom: 0; border-radius: 2px 2px 0 0; }
+.water-links { display: flex; justify-content: space-between; margin-top: 10px; font-size: 14px; }
+.water-links button { color: var(--water); }

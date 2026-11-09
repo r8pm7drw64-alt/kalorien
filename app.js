@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import { startScanner, normalizeCode } from './scanner.js';
+import { recognizeImage } from './ocr.js';
 
 const DB_URL = 'data/foods.tsv.gz';
 const DB_FILE_VERSION = 1; // erhöhen, wenn eine neue foods.tsv.gz ausgeliefert wird
@@ -33,7 +34,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const r0 = v => Math.round(v || 0);
 const r1 = v => { const x = Math.round((v || 0) * 10) / 10; return x.toLocaleString('de-DE'); };
 const parseNum = s => { const v = parseFloat(String(s ?? '').replace(',', '.')); return Number.isFinite(v) ? v : null; };
-const fmtIn = v => (v == null ? '' : String(Math.round(v * 10) / 10).replace('.', ','));
+const fmtIn = v => (v == null ? '' : String(Math.round(v * 100) / 100).replace('.', ','));
 
 function toast(msg, ms = 2200) {
   const t = document.getElementById('toast');
@@ -192,6 +193,7 @@ function openAddSheet(meal) {
       <div class="chips"><button class="chip active" data-mode="recent">Zuletzt</button><button class="chip" data-mode="frequent">Häufig</button><button class="chip" data-mode="custom">Eigene</button></div>
       <div data-results></div>
       <button class="secondary" data-new>Eigenes Lebensmittel anlegen</button>
+      <button class="secondary" data-photo-new>📷 Nährwerttabelle fotografieren</button>
       <button class="secondary" data-quick>Schnell eintragen (nur kcal &amp; Makros)</button>`,
   });
   const input = el.querySelector('input');
@@ -250,6 +252,7 @@ function openAddSheet(meal) {
   }));
   el.querySelector('[data-scan]').onclick = () => openScanner(code => handleScanned(code, meal, el));
   el.querySelector('[data-new]').onclick = () => openCustomFoodSheet({ meal, onAdded: () => closeSheet(el) });
+  el.querySelector('[data-photo-new]').onclick = () => openCustomFoodSheet({ meal, photo: true, onAdded: () => closeSheet(el) });
   el.querySelector('[data-quick]').onclick = () => openQuickSheet(meal, () => closeSheet(el));
   showList();
 }
@@ -401,7 +404,7 @@ function openFoodSheet({ food, entry, meal, date, preset, onAdded }) {
 }
 
 // ============ Eigenes Lebensmittel ============
-function openCustomFoodSheet({ food = null, code = '', name = '', meal, onAdded } = {}) {
+function openCustomFoodSheet({ food = null, code = '', name = '', meal, onAdded, photo = false } = {}) {
   const f = food || { code, n: name };
   const fields = [
     ['k', 'Energie', 'kcal'], ['f', 'Fett', 'g'], ['sf', 'davon gesättigt', 'g'], ['c', 'Kohlenhydrate', 'g'],
@@ -417,6 +420,9 @@ function openCustomFoodSheet({ food = null, code = '', name = '', meal, onAdded 
         <div class="field"><label>EAN</label><input class="wide" data-f="code" inputmode="numeric" value="${esc(f.code && !String(f.code).startsWith('c') ? f.code : '')}" placeholder="optional"></div>
       </div>
       <div class="section-label">Nährwerte pro 100 g / ml</div>
+      <button class="secondary" data-photo>📷 Nährwerttabelle fotografieren</button>
+      <input type="file" accept="image/*" data-photo-file hidden>
+      <div class="hint" data-ocr-status hidden></div>
       <div class="list">
         ${fields.map(([k, l, u]) => `<div class="field"><label>${l}</label><input data-f="${k}" inputmode="decimal" value="${fmtIn(f[k])}" placeholder="${k === 'k' || k === 'p' || k === 'c' || k === 'f' ? '0' : 'optional'}"><span class="unit">${u}</span></div>`).join('')}
       </div>
@@ -434,7 +440,40 @@ function openCustomFoodSheet({ food = null, code = '', name = '', meal, onAdded 
     if (!confirm('Eigenes Lebensmittel löschen? Einträge im Tagebuch bleiben erhalten.')) return;
     await db.deleteCustomFood(food.code); closeSheet(el); toast('Gelöscht'); render();
   };
-  if (!f.n) setTimeout(() => el.querySelector('[data-f=n]').focus(), 250);
+  if (!f.n && !photo && !code) setTimeout(() => el.querySelector('[data-f=n]').focus(), 250);
+
+  // ---- Nährwerttabelle per Foto ----
+  const $file = el.querySelector('[data-photo-file]');
+  const $status = el.querySelector('[data-ocr-status]');
+  const $photoBtn = el.querySelector('[data-photo]');
+  $photoBtn.onclick = () => $file.click();
+  if (photo) $file.click();
+  $file.onchange = async () => {
+    const file = $file.files[0];
+    $file.value = '';
+    if (!file) return;
+    $photoBtn.disabled = true;
+    $status.hidden = false;
+    el.querySelectorAll('.ocr-filled').forEach(i => i.classList.remove('ocr-filled'));
+    try {
+      const { values, found, warning } = await recognizeImage(file, m => ($status.textContent = m));
+      for (const [k, v] of Object.entries(values)) {
+        const input = el.querySelector(`[data-f="${k}"]`);
+        if (input) { input.value = fmtIn(v); input.classList.add('ocr-filled'); }
+      }
+      if (!found.length) {
+        $status.textContent = 'Keine Nährwerte erkannt. Tipp: Tabelle gerade, nah und ohne Spiegelung fotografieren.';
+      } else {
+        $status.innerHTML = `<b>${found.length} von 8 Werten erkannt</b> (grün markiert) – bitte mit der Packung vergleichen.` +
+          (warning ? `<br><span class="danger">${esc(warning)}</span>` : '');
+        if (!el.querySelector('[data-f=n]').value) setTimeout(() => el.querySelector('[data-f=n]').focus(), 300);
+      }
+    } catch (e) {
+      $status.textContent = 'Fehler bei der Texterkennung: ' + (e.message || e);
+    } finally {
+      $photoBtn.disabled = false;
+    }
+  };
 
   async function save() {
     const get = k => el.querySelector(`[data-f="${k}"]`).value;
@@ -684,7 +723,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 async function init() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // Neue App-Version: einmal neu laden, damit sie sofort aktiv ist
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) location.reload(); });
+    navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
+  }
   state.goals = { ...DEFAULT_GOALS, ...(await db.getMeta('goals', {})) };
   const ver = await db.getMeta('foodDbVersion', 0);
   if (ver < DB_FILE_VERSION) return runImport();

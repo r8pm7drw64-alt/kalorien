@@ -2,6 +2,7 @@ import * as db from './db.js';
 import { startScanner, normalizeCode } from './scanner.js';
 import { recognizeImage } from './ocr.js';
 
+const APP_VERSION = '1.1';
 const DB_URL = 'data/foods.tsv.gz';
 const DB_FILE_VERSION = 1; // erhöhen, wenn eine neue foods.tsv.gz ausgeliefert wird
 
@@ -605,7 +606,7 @@ async function renderSettings() {
       ${persisted === false ? '<br><span style="color:var(--muted);font-size:13px">Tipp: Zum Home-Bildschirm hinzufügen, damit iOS die Daten dauerhaft behält.</span>' : ''}
     </div>
     <button class="secondary" data-reimport>Datenbank neu laden</button>
-    <div class="hint" style="text-align:center;margin-top:20px">Kalorien · läuft komplett offline</div>`;
+    <div class="hint" style="text-align:center;margin-top:20px">Kalorien · Version ${APP_VERSION} · läuft komplett offline</div>`;
 
   const saveGoals = async () => {
     for (const k of ['kcal', 'p', 'c', 'f']) {

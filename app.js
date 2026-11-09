@@ -2,7 +2,7 @@ import * as db from './db.js';
 import { startScanner, normalizeCode } from './scanner.js';
 import { recognizeImage } from './ocr.js';
 
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 const DB_URL = 'data/foods.tsv.gz';
 const DB_FILE_VERSION = 1; // erhöhen, wenn eine neue foods.tsv.gz ausgeliefert wird
 
@@ -11,9 +11,9 @@ const MEALS = [
   { id: 'lunch', name: 'Mittagessen' },
   { id: 'dinner', name: 'Abendessen' },
   { id: 'snack', name: 'Snacks' },
-  { id: 'swim', name: 'Schwimmen' },
-  { id: 'bike', name: 'Radfahren' },
-  { id: 'run', name: 'Laufen' },
+  { id: 'swim', name: 'Schwimmen', sport: true },
+  { id: 'bike', name: 'Radfahren', sport: true },
+  { id: 'run', name: 'Laufen', sport: true },
 ];
 const DEFAULT_GOALS = { kcal: 2000, p: 100, c: 225, f: 67 };
 
@@ -101,8 +101,20 @@ async function renderDiary() {
   const entries = await db.entriesForDate(state.date);
   const t = sumTotals(entries);
   const g = state.goals;
-  const left = g.kcal - t.k;
-  const pct = Math.min(1, t.k / (g.kcal || 1));
+  // Grundumsatz = normale Mahlzeiten, Sport = Schwimmen/Radfahren/Laufen
+  const sportIds = new Set(MEALS.filter(m => m.sport).map(m => m.id));
+  const base = sumTotals(entries.filter(e => !sportIds.has(e.meal)));
+  const sport = sumTotals(entries.filter(e => sportIds.has(e.meal)));
+  const sportGoal = MEALS.filter(m => m.sport).reduce((a, m) => a + (state.mealGoals[m.id] || 0), 0);
+  const left = g.kcal - base.k;
+  const pct = Math.min(1, base.k / (g.kcal || 1));
+  const splitRow = (label, cls, val, goal) => `
+    <div class="split-row">
+      <div class="row"><span><i class="dot ${cls}"></i>${label}</span><span>${goal ? `<b>${r0(val)}</b> / ${r0(goal)} kcal` : `<b>${r0(val)}</b> kcal`}</span></div>
+      ${goal ? `<div class="bar ${val > goal * 1.05 ? 'over' : ''}"><i class="${cls}" style="width:${Math.min(100, (val / goal) * 100)}%"></i></div>
+      <div class="meal-left ${val > goal ? 'is-over' : ''}">${val > goal ? `${r0(val - goal)} kcal über dem Ziel` : `noch ${r0(goal - val)} kcal`}</div>` : ''}
+    </div>`;
+  const totalGoal = g.kcal + sportGoal;
   const C = 2 * Math.PI * 52;
   const macro = (label, val, goal, cls) => {
     const over = val > goal * 1.05;
@@ -126,10 +138,22 @@ async function renderDiary() {
         <div class="center"><div class="big">${r0(Math.abs(left))}</div><div class="small">${left < 0 ? 'kcal zu viel' : 'kcal übrig'}</div></div>
       </div>
       <div>
-        <div class="kcal-line"><b>${r0(t.k)}</b> von ${r0(g.kcal)} kcal</div>
+        <div class="kcal-line"><b>${r0(base.k)}</b> von ${r0(g.kcal)} kcal Grundumsatz</div>
         ${macro('Eiweiß', t.p, g.p, 'c-p')}
         ${macro('Kohlenhydrate', t.c, g.c, 'c-c')}
         ${macro('Fett', t.f, g.f, 'c-f')}
+      </div>
+    </div>
+    <div class="card split">
+      <div class="card-title"><h2>Grundumsatz &amp; Sport</h2></div>
+      ${splitRow('Grundumsatz', 'c-base', base.k, g.kcal)}
+      ${splitRow('Sport', 'c-sport', sport.k, sportGoal)}
+      <div class="split-total">
+        <div class="row"><span>Gesamt</span><span><b>${r0(t.k)}</b> / ${r0(totalGoal)} kcal</span></div>
+        <div class="bar stacked">
+          <i class="c-base" style="width:${Math.min(100, (base.k / (totalGoal || 1)) * 100)}%"></i><i class="c-sport" style="width:${Math.max(0, Math.min(100 - (base.k / (totalGoal || 1)) * 100, (sport.k / (totalGoal || 1)) * 100))}%"></i>
+        </div>
+        ${!sportGoal ? '<div class="meal-left">Tipp: Kalorienziele für Schwimmen, Radfahren und Laufen in den Einstellungen festlegen.</div>' : ''}
       </div>
     </div>`;
 
@@ -589,11 +613,12 @@ async function renderSettings() {
     <div class="header"><h1>Einstellungen</h1></div>
     <div class="section-label">Tagesziele</div>
     <div class="list">
-      <div class="field"><label>Kalorien</label><input data-g="kcal" inputmode="numeric" value="${r0(g.kcal)}"><span class="unit">kcal</span></div>
+      <div class="field"><label>Grundumsatz</label><input data-g="kcal" inputmode="numeric" value="${r0(g.kcal)}"><span class="unit">kcal</span></div>
       <div class="field"><label>Eiweiß</label><input data-g="p" inputmode="numeric" value="${r0(g.p)}"><span class="unit">g</span></div>
       <div class="field"><label>Kohlenhydrate</label><input data-g="c" inputmode="numeric" value="${r0(g.c)}"><span class="unit">g</span></div>
       <div class="field"><label>Fett</label><input data-g="f" inputmode="numeric" value="${r0(g.f)}"><span class="unit">g</span></div>
     </div>
+    <div class="hint">Grundumsatz = Tagesziel ohne Sport (Frühstück bis Snacks). Sport-Kalorien zählst du über die Mahlzeiten Schwimmen, Radfahren und Laufen.</div>
     <div class="hint" data-macrohint>Makros ergeben ${r0(macroKcal)} kcal.</div>
     <button class="secondary" data-split>Makros aus Kalorien berechnen (20 / 50 / 30 %)</button>
 

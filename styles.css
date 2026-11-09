@@ -240,3 +240,19 @@ button:disabled { opacity: .45; }
 .meal-bar { margin: 2px 0 4px; height: 6px; }
 .meal-left { font-size: 12px; color: var(--muted); margin-bottom: 4px; font-variant-numeric: tabular-nums; }
 .bar.over + .meal-left { color: var(--over); }
+/* Grundumsatz & Sport */
+:root { --sport: #0f9fb5; }
+@media (prefers-color-scheme: dark) { :root { --sport: #40c8e0; } }
+.c-base { background: var(--accent); } .c-sport { background: var(--sport); }
+.split-row, .split-total { margin-top: 10px; }
+.split-row .row, .split-total .row { display: flex; justify-content: space-between; font-size: 15px; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.split-row .row span:last-child, .split-total .row span:last-child { color: var(--muted); }
+.split-row b, .split-total b { color: var(--text); font-weight: 600; }
+.split-row .meal-left { margin-top: 3px; }
+.meal-left.is-over { color: var(--over); }
+.split-total { padding-top: 10px; border-top: 1px solid var(--line); font-weight: 600; }
+.split-total .meal-left { font-weight: 400; margin-top: 6px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
+.bar.stacked { display: flex; }
+.bar.stacked i { border-radius: 0; }
+.bar.stacked i:first-child { border-radius: 4px 0 0 4px; }
